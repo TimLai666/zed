@@ -1557,7 +1557,8 @@ impl WaylandWindowStatePtr {
 
         let state = self.state.borrow_mut();
         if let Some(viewport) = &state.viewport {
-            viewport.set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
+            let (width, height) = viewport_destination(size);
+            viewport.set_destination(width, height);
         }
         update_window(state);
     }
@@ -2624,4 +2625,43 @@ fn inset_by_tiling(mut bounds: Bounds<Pixels>, inset: Pixels, tiling: Tiling) ->
     }
 
     bounds
+}
+
+/// The `wp_viewport.set_destination` arguments for a surface of `size`.
+///
+/// A layer-shell surface may ask for a width or height of 0, which lets the
+/// compositor choose it in the first configure (`zwlr_layer_surface_v1.set_size`).
+/// If the compositor sends a fractional scale before that configure, the
+/// window is rescaled while its size is still 0, and `set_destination` with a
+/// zero dimension is a `bad_value` protocol error that disconnects the client.
+/// Such a size unsets the destination (-1, -1) until the configure brings a
+/// real one.
+fn viewport_destination(size: Size<Pixels>) -> (i32, i32) {
+    let width = f32::from(size.width) as i32;
+    let height = f32::from(size.height) as i32;
+    if width > 0 && height > 0 {
+        (width, height)
+    } else {
+        (-1, -1)
+    }
+}
+
+#[cfg(test)]
+mod viewport_destination_tests {
+    use super::viewport_destination;
+    use gpui::{px, size};
+
+    #[test]
+    fn viewport_destination_is_the_size_when_both_dimensions_are_positive() {
+        assert_eq!(viewport_destination(size(px(1280.), px(32.))), (1280, 32));
+    }
+
+    #[test]
+    fn viewport_destination_is_unset_while_a_dimension_is_zero() {
+        // A full-width layer-shell bar before its first configure.
+        assert_eq!(viewport_destination(size(px(0.), px(32.))), (-1, -1));
+        assert_eq!(viewport_destination(size(px(32.), px(0.))), (-1, -1));
+        assert_eq!(viewport_destination(size(px(0.), px(0.))), (-1, -1));
+        assert_eq!(viewport_destination(size(px(0.5), px(32.))), (-1, -1));
+    }
 }
